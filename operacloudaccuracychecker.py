@@ -5,9 +5,6 @@ import json
 import time
 from datetime import timedelta
 
-# Set page layout to wide
-st.set_page_config(layout="wide", page_title="Opera Cloud H&F Extractor and Discrepancy Checker")
-
 # Define placeholder JSON for user guidance
 placeholder_json = '''{
   "authentication": {
@@ -139,14 +136,13 @@ def retrieve_data(location_url, token, x_key, h_id):
         st.error(f"Failed to retrieve data: {response.status_code} - {response.reason}")
         return None
 
-# Process data from API response and CSV file
 def process_data(api_data, csv_file):
-    if 'revInvStats' not in api_data[0]:
-        st.error("The key 'revInvStats' is not found in the API response. Please check the API response structure.")
+    if 'roomsSold' not in api_data[0] or 'roomRevenue' not in api_data[0]:
+        st.error("The keys 'roomsSold' or 'roomRevenue' are not found in the API response. Please check the API response structure.")
         return None
 
     # Convert API JSON data to DataFrame
-    api_df = pd.json_normalize(api_data, 'revInvStats')
+    api_df = pd.json_normalize(api_data)
 
     # Read CSV data from uploaded file
     csv_df = pd.read_csv(csv_file, delimiter=';')
@@ -164,12 +160,12 @@ def process_data(api_data, csv_file):
                       api_df[['occupancyDate', 'roomsSold', 'roomRevenue']],
                       left_on='arrivalDate', right_on='occupancyDate', how='inner')
     merged.drop('occupancyDate', axis=1, inplace=True)
-    merged.columns = ['Date', 'RN_Juyo', 'Revenue_Juyo', 'RN_HF', 'Revenue_HF']
+    merged.columns = ['Date', 'RN_CSV', 'Revenue_CSV', 'RN_API', 'Revenue_API']
     
     # Fill NaNs and calculate differences
     merged.fillna(0, inplace=True)
-    merged['RN_Difference'] = merged['RN_Juyo'] - merged['RN_HF']
-    merged['Revenue_Difference'] = round(merged['Revenue_Juyo'] - merged['Revenue_HF'], 2)
+    merged['RN_Difference'] = merged['RN_CSV'] - merged['RN_API']
+    merged['Revenue_Difference'] = round(merged['Revenue_CSV'] - merged['Revenue_API'], 2)
     
     return merged
 
@@ -192,7 +188,7 @@ if retrieve_button and 'api_data_combined' not in st.session_state:
             if all_data:
                 st.success("Data retrieved successfully!")
                 # Combine all JSON responses into a single list and store in session state
-                st.session_state['api_data_combined'] = [item for sublist in all_data for item in sublist.get('revInvStats', [])]
+                st.session_state['api_data_combined'] = [item for sublist in all_data for item in sublist]
 
 # Display API data on the left side
 col1, col2 = st.columns(2)
@@ -232,13 +228,13 @@ with col2:
 
             past_rn_discrepancy_abs = abs(abs(past_data['RN_Difference']).sum())
             past_revenue_discrepancy_abs = abs(abs(past_data['Revenue_Difference']).sum())
-            past_rn_discrepancy_pct = abs(abs(past_data['RN_Difference']).sum()) / past_data['RN_HF'].sum() * 100
-            past_revenue_discrepancy_pct = abs(abs(past_data['Revenue_Difference']).sum()) / past_data['Revenue_HF'].sum() * 100
+            past_rn_discrepancy_pct = abs(abs(past_data['RN_Difference']).sum()) / past_data['RN_API'].sum() * 100
+            past_revenue_discrepancy_pct = abs(abs(past_data['Revenue_Difference']).sum()) / past_data['Revenue_API'].sum() * 100
 
             future_rn_discrepancy_abs = abs(abs(future_data['RN_Difference']).sum())
             future_revenue_discrepancy_abs = abs(abs(future_data['Revenue_Difference']).sum())
-            future_rn_discrepancy_pct = abs(abs(future_data['RN_Difference']).sum()) / future_data['RN_HF'].sum() * 100
-            future_revenue_discrepancy_pct = abs(abs(future_data['Revenue_Difference']).sum()) / future_data['Revenue_HF'].sum() * 100
+            future_rn_discrepancy_pct = abs(abs(future_data['RN_Difference']).sum()) / future_data['RN_API'].sum() * 100
+            future_revenue_discrepancy_pct = abs(abs(future_data['Revenue_Difference']).sum()) / future_data['Revenue_API'].sum() * 100
 
             rn_only_discrepancies = (filtered_data['RN_Difference'] != 0) & (filtered_data['Revenue_Difference'] == 0)
             rev_only_discrepancies = (filtered_data['Revenue_Difference'] != 0) & (filtered_data['RN_Difference'] == 0)

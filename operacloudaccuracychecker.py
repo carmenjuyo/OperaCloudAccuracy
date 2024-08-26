@@ -138,6 +138,11 @@ def retrieve_data(location_url, token, x_key, h_id):
         return None
 
 def process_data(api_data, csv_file):
+    # Check if 'revInvStats' key exists in the API response
+    if 'revInvStats' not in api_data[0]:
+        st.error("The key 'revInvStats' is not found in the API response. Please check the API response structure.")
+        return pd.DataFrame()  # Return an empty DataFrame or handle this case as needed
+
     # Convert API JSON data to DataFrame
     api_df = pd.json_normalize(api_data, 'revInvStats')
 

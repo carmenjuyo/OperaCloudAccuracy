@@ -166,7 +166,8 @@ def process_data(api_data, csv_file):
     
     return merged
 
-if retrieve_button:
+# Check if the 'retrieve_button' was clicked and data isn't already stored
+if retrieve_button and 'api_data_combined' not in st.session_state:
     with st.spinner('Processing... Please wait.'):
         token = authenticate(hostname, x_app_key, client_id, client_secret, username, password)
         if token:
@@ -183,74 +184,77 @@ if retrieve_button:
 
             if all_data:
                 st.success("Data retrieved successfully!")
+                # Combine all JSON responses into a single DataFrame and store in session state
+                st.session_state['api_data_combined'] = [item for sublist in all_data for item in sublist['revInvStats']]
 
-                # Combine all JSON responses into a single DataFrame
-                api_data_combined = [item for sublist in all_data for item in sublist['revInvStats']]
-                
-                # Proceed to file upload for discrepancy checking
-                st.header('Discrepancy Checker')
-                uploaded_csv_file = st.file_uploader("Choose a Daily Totals file (CSV)", type=['csv'])
+# If data is already retrieved or has been retrieved just now
+if 'api_data_combined' in st.session_state:
+    api_data_combined = st.session_state['api_data_combined']
 
-                if uploaded_csv_file:
-                    # Process and compare the data
-                    comparison_result = process_data(api_data_combined, uploaded_csv_file)
+    # Proceed to file upload for discrepancy checking
+    st.header('Discrepancy Checker')
+    uploaded_csv_file = st.file_uploader("Choose a Daily Totals file (CSV)", type=['csv'])
 
-                    if not comparison_result.empty:
-                        st.sidebar.header("Filters")
-                        show_discrepancies_only = st.sidebar.checkbox("Show Only Discrepancies", value=True)
+    if uploaded_csv_file:
+        # Process and compare the data
+        comparison_result = process_data(api_data_combined, uploaded_csv_file)
 
-                        default_columns = ['Date', 'RN_Difference', 'Revenue_Difference']
-                        columns_to_show = st.sidebar.multiselect("Select columns to display", comparison_result.columns, default=default_columns)
-                        
-                        filtered_data = comparison_result.loc[:, columns_to_show]
-                        if show_discrepancies_only:
-                            filtered_data = filtered_data[(comparison_result['RN_Difference'] != 0) | (comparison_result['Revenue_Difference'] != 0)]
+        if not comparison_result.empty:
+            st.sidebar.header("Filters")
+            show_discrepancies_only = st.sidebar.checkbox("Show Only Discrepancies", value=True)
 
-                        # KPI calculations
-                        current_date = pd.Timestamp.now().normalize()
-                        past_data = comparison_result[comparison_result['Date'] < current_date]
-                        future_data = comparison_result[comparison_result['Date'] >= current_date]
+            default_columns = ['Date', 'RN_Difference', 'Revenue_Difference']
+            columns_to_show = st.sidebar.multiselect("Select columns to display", comparison_result.columns, default=default_columns)
+            
+            filtered_data = comparison_result.loc[:, columns_to_show]
+            if show_discrepancies_only:
+                filtered_data = filtered_data[(comparison_result['RN_Difference'] != 0) | (comparison_result['Revenue_Difference'] != 0)]
 
-                        past_rn_discrepancy_abs = abs(abs(past_data['RN_Difference']).sum())
-                        past_revenue_discrepancy_abs = abs(abs(past_data['Revenue_Difference']).sum())
-                        past_rn_discrepancy_pct = abs(abs(past_data['RN_Difference']).sum()) / past_data['RN_HF'].sum() * 100
-                        past_revenue_discrepancy_pct = abs(abs(past_data['Revenue_Difference']).sum()) / past_data['Revenue_HF'].sum() * 100
+            # KPI calculations
+            current_date = pd.Timestamp.now().normalize()
+            past_data = comparison_result[comparison_result['Date'] < current_date]
+            future_data = comparison_result[comparison_result['Date'] >= current_date]
 
-                        future_rn_discrepancy_abs = abs(abs(future_data['RN_Difference']).sum())
-                        future_revenue_discrepancy_abs = abs(abs(future_data['Revenue_Difference']).sum())
-                        future_rn_discrepancy_pct = abs(abs(future_data['RN_Difference']).sum()) / future_data['RN_HF'].sum() * 100
-                        future_revenue_discrepancy_pct = abs(abs(future_data['Revenue_Difference']).sum()) / future_data['Revenue_HF'].sum() * 100
+            past_rn_discrepancy_abs = abs(abs(past_data['RN_Difference']).sum())
+            past_revenue_discrepancy_abs = abs(abs(past_data['Revenue_Difference']).sum())
+            past_rn_discrepancy_pct = abs(abs(past_data['RN_Difference']).sum()) / past_data['RN_HF'].sum() * 100
+            past_revenue_discrepancy_pct = abs(abs(past_data['Revenue_Difference']).sum()) / past_data['Revenue_HF'].sum() * 100
 
-                        rn_only_discrepancies = (filtered_data['RN_Difference'] != 0) & (filtered_data['Revenue_Difference'] == 0)
-                        rev_only_discrepancies = (filtered_data['Revenue_Difference'] != 0) & (filtered_data['RN_Difference'] == 0)
-                        if rn_only_discrepancies.any():
-                            st.warning("Warning: There are Room Night discrepancies without corresponding Revenue discrepancies. Something may be off in the configuration or the logic of the code.")
-                        if rev_only_discrepancies.any():
-                            st.warning("Warning: There are Revenue discrepancies without corresponding Room Night discrepancies. Something may be off in the configuration or the logic of the code.")
+            future_rn_discrepancy_abs = abs(abs(future_data['RN_Difference']).sum())
+            future_revenue_discrepancy_abs = abs(abs(future_data['Revenue_Difference']).sum())
+            future_rn_discrepancy_pct = abs(abs(future_data['RN_Difference']).sum()) / future_data['RN_HF'].sum() * 100
+            future_revenue_discrepancy_pct = abs(abs(future_data['Revenue_Difference']).sum()) / future_data['Revenue_HF'].sum() * 100
 
-                        st.header(f"Accuracy Report")
-                        kpi_col1, kpi_col2 = st.columns(2)
-                        with kpi_col1:
-                            st.subheader("Past")
-                            st.metric("RN Accuracy (%)", f"{100-past_rn_discrepancy_pct:.2f}%")
-                            st.metric("Revenue Accuracy (%)", f"{100-past_revenue_discrepancy_pct:.2f}%")
-                            st.metric("RN Discrepancy (Absolute)", f"{past_rn_discrepancy_abs} RNs")
-                            st.metric("Revenue Discrepancy (Absolute)", f"{past_revenue_discrepancy_abs}")
+            rn_only_discrepancies = (filtered_data['RN_Difference'] != 0) & (filtered_data['Revenue_Difference'] == 0)
+            rev_only_discrepancies = (filtered_data['Revenue_Difference'] != 0) & (filtered_data['RN_Difference'] == 0)
+            if rn_only_discrepancies.any():
+                st.warning("Warning: There are Room Night discrepancies without corresponding Revenue discrepancies. Something may be off in the configuration or the logic of the code.")
+            if rev_only_discrepancies.any():
+                st.warning("Warning: There are Revenue discrepancies without corresponding Room Night discrepancies. Something may be off in the configuration or the logic of the code.")
 
-                        with kpi_col2:
-                            st.subheader("Future")
-                            st.metric("RN Accuracy (%)", f"{100-future_rn_discrepancy_pct:.2f}%")
-                            st.metric("Revenue Accuracy (%)", f"{100-future_revenue_discrepancy_pct:.2f}%")
-                            st.metric("RN Discrepancy (Absolute)", f"{future_rn_discrepancy_abs} RNs")
-                            st.metric("Revenue Discrepancy (Absolute)", f"{future_revenue_discrepancy_abs:.2f}")
-                        
-                        st.header("Detailed Report")
-                        formatted_data = filtered_data.style.format({
-                            'RN_Difference': "{:.0f}",
-                            'Revenue_Difference': "{:.2f}"
-                        }).applymap(lambda x: "background-color: yellow" if isinstance(x, (int, float)) and x != 0 else "", subset=['RN_Difference', 'Revenue_Difference'])
-                        st.dataframe(formatted_data)
-                    else:
-                        st.error("Data could not be processed. Please check the file formats and contents.")
+            st.header(f"Accuracy Report")
+            kpi_col1, kpi_col2 = st.columns(2)
+            with kpi_col1:
+                st.subheader("Past")
+                st.metric("RN Accuracy (%)", f"{100-past_rn_discrepancy_pct:.2f}%")
+                st.metric("Revenue Accuracy (%)", f"{100-past_revenue_discrepancy_pct:.2f}%")
+                st.metric("RN Discrepancy (Absolute)", f"{past_rn_discrepancy_abs} RNs")
+                st.metric("Revenue Discrepancy (Absolute)", f"{past_revenue_discrepancy_abs}")
+
+            with kpi_col2:
+                st.subheader("Future")
+                st.metric("RN Accuracy (%)", f"{100-future_rn_discrepancy_pct:.2f}%")
+                st.metric("Revenue Accuracy (%)", f"{100-future_revenue_discrepancy_pct:.2f}%")
+                st.metric("RN Discrepancy (Absolute)", f"{future_rn_discrepancy_abs} RNs")
+                st.metric("Revenue Discrepancy (Absolute)", f"{future_revenue_discrepancy_abs:.2f}")
+            
+            st.header("Detailed Report")
+            formatted_data = filtered_data.style.format({
+                'RN_Difference': "{:.0f}",
+                'Revenue_Difference': "{:.2f}"
+            }).applymap(lambda x: "background-color: yellow" if isinstance(x, (int, float)) and x != 0 else "", subset=['RN_Difference', 'Revenue_Difference'])
+            st.dataframe(formatted_data)
+        else:
+            st.error("Data could not be processed. Please check the file formats and contents.")
 else:
-    st.write("Please upload a CSV file to proceed.")
+    st.write("Please retrieve data and upload a CSV file to proceed.")

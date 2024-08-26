@@ -139,38 +139,35 @@ def retrieve_data(location_url, token, x_key, h_id):
         st.error(f"Failed to retrieve data: {response.status_code} - {response.reason}")
         return None
 
-def process_data(api_data, csv_file):
-    if 'roomsSold' not in api_data[0] or 'roomRevenue' not in api_data[0]:
-        st.error("The keys 'roomsSold' or 'roomRevenue' are not found in the API response. Please check the API response structure.")
-        return None
-
-    # Convert API JSON data to DataFrame
-    api_df = pd.json_normalize(api_data)
-
-    # Read CSV data from uploaded file
-    csv_df = pd.read_csv(csv_file, delimiter=';')
-
-    # Trim column names to remove potential leading/trailing whitespace
-    api_df.columns = api_df.columns.str.strip()
-    csv_df.columns = csv_df.columns.str.strip()
+def create_comparison_table(api_data, csv_data):
+    """Create a table comparing API data with CSV data and calculating variances and accuracy percentages."""
     
-    # Convert date columns
-    csv_df['arrivalDate'] = pd.to_datetime(csv_df['arrivalDate'])
-    api_df['occupancyDate'] = pd.to_datetime(api_df['occupancyDate'])
+    # Calculate totals for API data
+    total_rooms_sold_api = api_data['roomsSold'].sum()
+    total_room_revenue_api = api_data['roomRevenue'].sum()
+    
+    # Calculate totals for CSV data
+    total_rooms_sold_csv = csv_data['rn'].sum()
+    total_room_revenue_csv = csv_data['revNet'].sum()
+    
+    # Calculate variances
+    rn_variance = total_rooms_sold_csv - total_rooms_sold_api
+    revenue_variance = total_room_revenue_csv - total_room_revenue_api
+    
+    # Calculate percentage discrepancies
+    rn_accuracy_pct = ((total_rooms_sold_csv - rn_variance) / total_rooms_sold_csv) * 100 if total_rooms_sold_csv != 0 else 0
+    revenue_accuracy_pct = ((total_room_revenue_csv - revenue_variance) / total_room_revenue_csv) * 100 if total_room_revenue_csv != 0 else 0
 
-    # Merge on date
-    merged = pd.merge(csv_df[['arrivalDate', 'rn', 'revNet']],
-                      api_df[['occupancyDate', 'roomsSold', 'roomRevenue']],
-                      left_on='arrivalDate', right_on='occupancyDate', how='inner')
-    merged.drop('occupancyDate', axis=1, inplace=True)
-    merged.columns = ['Date', 'RN_CSV', 'Revenue_CSV', 'RN_API', 'Revenue_API']
+    # Create a DataFrame for display
+    comparison_df = pd.DataFrame({
+        'Metric': ['Rooms Sold', 'Room Revenue'],
+        'API Data': [total_rooms_sold_api, total_room_revenue_api],
+        'CSV Data': [total_rooms_sold_csv, total_room_revenue_csv],
+        'Variance': [rn_variance, revenue_variance],
+        'Accuracy (%)': [rn_accuracy_pct, revenue_accuracy_pct]
+    })
     
-    # Fill NaNs and calculate differences
-    merged.fillna(0, inplace=True)
-    merged['RN_Difference'] = merged['RN_CSV'] - merged['RN_API']
-    merged['Revenue_Difference'] = round(merged['Revenue_CSV'] - merged['Revenue_API'], 2)
-    
-    return merged
+    return comparison_df
 
 # Retrieve data and store in session state
 if retrieve_button and 'api_data_combined' not in st.session_state:
@@ -210,64 +207,17 @@ with col2:
     uploaded_csv_file = st.file_uploader("Choose a Daily Totals file (CSV)", type=['csv'])
 
     if uploaded_csv_file and 'api_data_combined' in st.session_state:
+        # Read CSV data from uploaded file
+        csv_df = pd.read_csv(uploaded_csv_file, delimiter=';')
+
+        # Compare the data between the API response and the CSV file
         api_data_combined = st.session_state['api_data_combined']
-        comparison_result = process_data(api_data_combined, uploaded_csv_file)
+        comparison_result_df = create_comparison_table(pd.DataFrame(api_data_combined), csv_df)
 
-        if comparison_result is not None and not comparison_result.empty:
-            st.sidebar.header("Filters")
-            show_discrepancies_only = st.sidebar.checkbox("Show Only Discrepancies", value=True)
-
-            default_columns = ['Date', 'RN_Difference', 'Revenue_Difference']
-            columns_to_show = st.sidebar.multiselect("Select columns to display", comparison_result.columns, default=default_columns)
-            
-            filtered_data = comparison_result.loc[:, columns_to_show]
-            if show_discrepancies_only:
-                filtered_data = filtered_data[(comparison_result['RN_Difference'] != 0) | (comparison_result['Revenue_Difference'] != 0)]
-
-            # KPI calculations
-            current_date = pd.Timestamp.now().normalize()
-            past_data = comparison_result[comparison_result['Date'] < current_date]
-            future_data = comparison_result[comparison_result['Date'] >= current_date]
-
-            past_rn_discrepancy_abs = abs(abs(past_data['RN_Difference']).sum())
-            past_revenue_discrepancy_abs = abs(abs(past_data['Revenue_Difference']).sum())
-            past_rn_discrepancy_pct = abs(abs(past_data['RN_Difference']).sum()) / past_data['RN_API'].sum() * 100
-            past_revenue_discrepancy_pct = abs(abs(past_data['Revenue_Difference']).sum()) / past_data['Revenue_API'].sum() * 100
-
-            future_rn_discrepancy_abs = abs(abs(future_data['RN_Difference']).sum())
-            future_revenue_discrepancy_abs = abs(abs(future_data['Revenue_Difference']).sum())
-            future_rn_discrepancy_pct = abs(abs(future_data['RN_Difference']).sum()) / future_data['RN_API'].sum() * 100
-            future_revenue_discrepancy_pct = abs(abs(future_data['Revenue_Difference']).sum()) / future_data['Revenue_API'].sum() * 100
-
-            rn_only_discrepancies = (filtered_data['RN_Difference'] != 0) & (filtered_data['Revenue_Difference'] == 0)
-            rev_only_discrepancies = (filtered_data['Revenue_Difference'] != 0) & (filtered_data['RN_Difference'] == 0)
-            if rn_only_discrepancies.any():
-                st.warning("Warning: There are Room Night discrepancies without corresponding Revenue discrepancies. Something may be off in the configuration or the logic of the code.")
-            if rev_only_discrepancies.any():
-                st.warning("Warning: There are Revenue discrepancies without corresponding Room Night discrepancies. Something may be off in the configuration or the logic of the code.")
-
-            st.header(f"Accuracy Report")
-            kpi_col1, kpi_col2 = st.columns(2)
-            with kpi_col1:
-                st.subheader("Past")
-                st.metric("RN Accuracy (%)", f"{100-past_rn_discrepancy_pct:.2f}%")
-                st.metric("Revenue Accuracy (%)", f"{100-past_revenue_discrepancy_pct:.2f}%")
-                st.metric("RN Discrepancy (Absolute)", f"{past_rn_discrepancy_abs} RNs")
-                st.metric("Revenue Discrepancy (Absolute)", f"{past_revenue_discrepancy_abs}")
-
-            with kpi_col2:
-                st.subheader("Future")
-                st.metric("RN Accuracy (%)", f"{100-future_rn_discrepancy_pct:.2f}%")
-                st.metric("Revenue Accuracy (%)", f"{100-future_revenue_discrepancy_pct:.2f}%")
-                st.metric("RN Discrepancy (Absolute)", f"{future_rn_discrepancy_abs} RNs")
-                st.metric("Revenue Discrepancy (Absolute)", f"{future_revenue_discrepancy_abs:.2f}")
-            
-            st.header("Detailed Report")
-            formatted_data = filtered_data.style.format({
-                'RN_Difference': "{:.0f}",
-                'Revenue_Difference': "{:.2f}"
-            }).applymap(lambda x: "background-color: yellow" if isinstance(x, (int, float)) and x != 0 else "", subset=['RN_Difference', 'Revenue_Difference'])
-            st.dataframe(formatted_data)
+        # Display the comparison table
+        if not comparison_result_df.empty:
+            st.header("Comparison Table")
+            st.dataframe(comparison_result_df)
         else:
             st.error("Data could not be processed. Please check the file formats and contents.")
     else:

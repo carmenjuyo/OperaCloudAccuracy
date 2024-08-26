@@ -1,7 +1,6 @@
 import streamlit as st
 import requests
 import pandas as pd
-from io import BytesIO
 import json
 import time
 from datetime import timedelta
@@ -24,7 +23,7 @@ st.title('Opera Cloud H&F Extractor and Discrepancy Checker')
 
 # JSON configuration input and Submit button
 json_input = st.empty()  # Create an empty placeholder for dynamic layout management
-json_config = json_input.text_area("Paste your configuration JSON here:", placeholder=placeholder_json, height=100)
+json_config = st.text_area("Paste your configuration JSON here:", placeholder=placeholder_json, height=100)
 submit_json = st.button('Submit JSON')
 
 # Process and validate JSON when submitted
@@ -137,11 +136,11 @@ def retrieve_data(location_url, token, x_key, h_id):
         st.error(f"Failed to retrieve data: {response.status_code} - {response.reason}")
         return None
 
+# Process data from API response and CSV file
 def process_data(api_data, csv_file):
-    # Check if 'revInvStats' key exists in the API response
     if 'revInvStats' not in api_data[0]:
         st.error("The key 'revInvStats' is not found in the API response. Please check the API response structure.")
-        return pd.DataFrame()  # Return an empty DataFrame or handle this case as needed
+        return None
 
     # Convert API JSON data to DataFrame
     api_df = pd.json_normalize(api_data, 'revInvStats')
@@ -171,7 +170,7 @@ def process_data(api_data, csv_file):
     
     return merged
 
-# Check if the 'retrieve_button' was clicked and data isn't already stored
+# Retrieve data and store in session state
 if retrieve_button and 'api_data_combined' not in st.session_state:
     with st.spinner('Processing... Please wait.'):
         token = authenticate(hostname, x_app_key, client_id, client_secret, username, password)
@@ -189,22 +188,30 @@ if retrieve_button and 'api_data_combined' not in st.session_state:
 
             if all_data:
                 st.success("Data retrieved successfully!")
-                # Combine all JSON responses into a single DataFrame and store in session state
-                st.session_state['api_data_combined'] = [item for sublist in all_data for item in sublist['revInvStats']]
+                # Combine all JSON responses into a single list and store in session state
+                st.session_state['api_data_combined'] = [item for sublist in all_data for item in sublist.get('revInvStats', [])]
 
-# If data is already retrieved or has been retrieved just now
-if 'api_data_combined' in st.session_state:
-    api_data_combined = st.session_state['api_data_combined']
+# Display API data on the left side
+col1, col2 = st.columns(2)
 
-    # Proceed to file upload for discrepancy checking
+with col1:
+    st.header("API Data")
+    if 'api_data_combined' in st.session_state and st.session_state['api_data_combined']:
+        api_data_combined = st.session_state['api_data_combined']
+        st.dataframe(pd.DataFrame(api_data_combined))
+    else:
+        st.write("No API data retrieved yet. Please retrieve data first.")
+
+# Display CSV upload and accuracy check on the right side
+with col2:
     st.header('Discrepancy Checker')
     uploaded_csv_file = st.file_uploader("Choose a Daily Totals file (CSV)", type=['csv'])
 
-    if uploaded_csv_file:
-        # Process and compare the data
+    if uploaded_csv_file and 'api_data_combined' in st.session_state:
+        api_data_combined = st.session_state['api_data_combined']
         comparison_result = process_data(api_data_combined, uploaded_csv_file)
 
-        if not comparison_result.empty:
+        if comparison_result is not None and not comparison_result.empty:
             st.sidebar.header("Filters")
             show_discrepancies_only = st.sidebar.checkbox("Show Only Discrepancies", value=True)
 
@@ -261,5 +268,5 @@ if 'api_data_combined' in st.session_state:
             st.dataframe(formatted_data)
         else:
             st.error("Data could not be processed. Please check the file formats and contents.")
-else:
-    st.write("Please retrieve data and upload a CSV file to proceed.")
+    else:
+        st.write("Please retrieve data and upload a CSV file to proceed.")

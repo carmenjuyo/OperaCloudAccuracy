@@ -5,6 +5,9 @@ import json
 import time
 from datetime import timedelta
 
+# Set page layout to wide
+st.set_page_config(layout="wide", page_title="Opera Cloud H&F Extractor and Discrepancy Checker")
+
 # Define placeholder JSON for user guidance
 placeholder_json = '''{
   "authentication": {

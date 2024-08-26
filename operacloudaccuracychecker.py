@@ -74,30 +74,18 @@ def authenticate(host, x_key, client, secret, user, passw):
     headers = {
         'Content-Type': 'application/x-www-form-urlencoded',
         'x-app-key': x_key,
-        'Authorization': 'Basic ' + _basic_auth_str(client, secret),
+        'Authorization': 'Basic ' + requests.auth._basic_auth_str(client, secret),
     }
     data = {
         'username': user,
         'password': passw,
         'grant_type': 'password'
     }
-
-    # Debugging: Log URL, headers, and data to ensure they match what works in Postman
-    st.write(f"URL: {url}")
-    st.write(f"Headers: {headers}")
-    st.write(f"Data: {data}")
-
     response = requests.post(url, headers=headers, data=data)
-
-    # Debugging: Log the response details
-    st.write(f"Response Status Code: {response.status_code}")
-    st.write(f"Response Headers: {response.headers}")
-    st.write(f"Response Text: {response.text}")
-
     if response.status_code == 200:
         return response.json()['access_token']
     else:
-        st.error(f'Authentication failed: {response.json()}')
+        st.error(f'Authentication failed: {response.text}')
         return None
 
 def start_async_process(token, host, x_key, h_id, ext_code, s_date, e_date):
@@ -112,29 +100,13 @@ def start_async_process(token, host, x_key, h_id, ext_code, s_date, e_date):
         "dateRangeEnd": e_date.strftime("%Y-%m-%d"),
         "roomTypes": [""]
     }
-
-    # Construct the URL without double slashes or missing parts
     url = f"{host}/inv/async/v1/externalSystems/{ext_code}/hotels/{h_id}/revenueInventoryStatistics"
-
-    # Debugging: Log URL, headers, and data to ensure they match what works in Postman
-    st.write(f"URL: {url}")
-    st.write(f"Headers: {headers}")
-    st.write(f"Data: {json.dumps(data, indent=2)}")
-
-    # Send the POST request to start the async process
     response = requests.post(url, json=data, headers=headers)
-
-    # Debugging: Log the response details
-    st.write(f"Response Status Code: {response.status_code}")
-    st.write(f"Response Headers: {response.headers}")
-    st.write(f"Response Text: {response.text}")
-
     if response.status_code == 202:
         return response.headers.get('Location')
     else:
         st.error(f"Failed to start asynchronous process: {response.status_code} - {response.text}")
         return None
-
 
 def wait_for_data_ready(location_url, token, x_key, h_id):
     headers = {

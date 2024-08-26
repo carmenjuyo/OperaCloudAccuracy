@@ -137,31 +137,24 @@ def retrieve_data(location_url, token, x_key, h_id):
         st.error(f"Failed to retrieve data: {response.status_code} - {response.reason}")
         return None
 
-def data_to_excel(all_data, h_id, s_date, e_date):
-    df = pd.concat([pd.json_normalize(data, 'revInvStats') for data in all_data], ignore_index=True)
-    excel_file = BytesIO()
-    filename = f"statistics_{h_id}_{s_date.strftime('%Y-%m-%d')}_{e_date.strftime('%Y-%m-%d')}.xlsx"
-    with pd.ExcelWriter(excel_file, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False)
-    excel_data = excel_file.getvalue()
-    return excel_data, filename
+def process_data(api_data, csv_file):
+    # Convert API JSON data to DataFrame
+    api_df = pd.json_normalize(api_data, 'revInvStats')
 
-def process_data(file1, file2):
-    # Read data from files
-    data1 = pd.read_csv(file1, delimiter=';')
-    data2 = pd.read_excel(file2)
+    # Read CSV data from uploaded file
+    csv_df = pd.read_csv(csv_file, delimiter=';')
 
     # Trim column names to remove potential leading/trailing whitespace
-    data1.columns = data1.columns.str.strip()
-    data2.columns = data2.columns.str.strip()
+    api_df.columns = api_df.columns.str.strip()
+    csv_df.columns = csv_df.columns.str.strip()
     
     # Convert date columns
-    data1['arrivalDate'] = pd.to_datetime(data1['arrivalDate'])
-    data2['occupancyDate'] = pd.to_datetime(data2['occupancyDate'])
+    csv_df['arrivalDate'] = pd.to_datetime(csv_df['arrivalDate'])
+    api_df['occupancyDate'] = pd.to_datetime(api_df['occupancyDate'])
 
     # Merge on date
-    merged = pd.merge(data1[['arrivalDate', 'rn', 'revNet']],
-                      data2[['occupancyDate', 'roomsSold', 'roomRevenue']],
+    merged = pd.merge(csv_df[['arrivalDate', 'rn', 'revNet']],
+                      api_df[['occupancyDate', 'roomsSold', 'roomRevenue']],
                       left_on='arrivalDate', right_on='occupancyDate', how='inner')
     merged.drop('occupancyDate', axis=1, inplace=True)
     merged.columns = ['Date', 'RN_Juyo', 'Revenue_Juyo', 'RN_HF', 'Revenue_HF']
@@ -173,16 +166,6 @@ def process_data(file1, file2):
     
     return merged
 
-def parse_hotel_name(file_name):
-    # Split the base name by underscore
-    parts = file_name.split('_')
-    
-    # The hotel name should be the first part of the split result
-    hotel_name = parts[0]
-    
-    return hotel_name
-
-# Check if data retrieval button is pressed
 if retrieve_button:
     with st.spinner('Processing... Please wait.'):
         token = authenticate(hostname, x_app_key, client_id, client_secret, username, password)
@@ -199,32 +182,34 @@ if retrieve_button:
                             all_data.append(data)
 
             if all_data:
-                excel_data, filename = data_to_excel(all_data, hotel_id, start_date, end_date)
-                st.download_button(label='Download Excel file', data=excel_data, file_name=filename, mime='application/vnd.ms-excel')
-                st.success("Your report is ready!")
+                st.success("Data retrieved successfully!")
 
+                # Combine all JSON responses into a single DataFrame
+                api_data_combined = [item for sublist in all_data for item in sublist['revInvStats']]
+                
                 # Proceed to file upload for discrepancy checking
                 st.header('Discrepancy Checker')
-                uploaded_file1 = st.file_uploader("Choose a Daily Totals file (CSV)", type=['csv'])
-                uploaded_file2 = st.file_uploader("Choose the Statistics file you just downloaded (XLSX)", type=['xlsx'])
+                uploaded_csv_file = st.file_uploader("Choose a Daily Totals file (CSV)", type=['csv'])
 
-                if uploaded_file1 and uploaded_file2:
-                    data = process_data(uploaded_file1, uploaded_file2)
-                    if not data.empty:
+                if uploaded_csv_file:
+                    # Process and compare the data
+                    comparison_result = process_data(api_data_combined, uploaded_csv_file)
+
+                    if not comparison_result.empty:
                         st.sidebar.header("Filters")
                         show_discrepancies_only = st.sidebar.checkbox("Show Only Discrepancies", value=True)
 
                         default_columns = ['Date', 'RN_Difference', 'Revenue_Difference']
-                        columns_to_show = st.sidebar.multiselect("Select columns to display", data.columns, default=default_columns)
+                        columns_to_show = st.sidebar.multiselect("Select columns to display", comparison_result.columns, default=default_columns)
                         
-                        filtered_data = data.loc[:, columns_to_show]
+                        filtered_data = comparison_result.loc[:, columns_to_show]
                         if show_discrepancies_only:
-                            filtered_data = filtered_data[(data['RN_Difference'] != 0) | (data['Revenue_Difference'] != 0)]
+                            filtered_data = filtered_data[(comparison_result['RN_Difference'] != 0) | (comparison_result['Revenue_Difference'] != 0)]
 
                         # KPI calculations
                         current_date = pd.Timestamp.now().normalize()
-                        past_data = data[data['Date'] < current_date]
-                        future_data = data[data['Date'] >= current_date]
+                        past_data = comparison_result[comparison_result['Date'] < current_date]
+                        future_data = comparison_result[comparison_result['Date'] >= current_date]
 
                         past_rn_discrepancy_abs = abs(abs(past_data['RN_Difference']).sum())
                         past_revenue_discrepancy_abs = abs(abs(past_data['Revenue_Difference']).sum())
@@ -243,7 +228,7 @@ if retrieve_button:
                         if rev_only_discrepancies.any():
                             st.warning("Warning: There are Revenue discrepancies without corresponding Room Night discrepancies. Something may be off in the configuration or the logic of the code.")
 
-                        st.header(f"Accuracy Report for {parse_hotel_name(uploaded_file1.name)}")
+                        st.header(f"Accuracy Report")
                         kpi_col1, kpi_col2 = st.columns(2)
                         with kpi_col1:
                             st.subheader("Past")
@@ -268,4 +253,4 @@ if retrieve_button:
                     else:
                         st.error("Data could not be processed. Please check the file formats and contents.")
 else:
-    st.write("Please upload both files to proceed.")
+    st.write("Please upload a CSV file to proceed.")
